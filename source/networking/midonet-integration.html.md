@@ -18,11 +18,11 @@ The following guides cover the basic steps for the integration of **MidoNet** or
 **Midokura Enterprise MidoNet (MEM)** into a Packstack All-in-One OpenStack
 installation:
 
-* [MidoNet 5.1 Integration with RDO Liberty on CentOS 7 using Packstack](../midonet-integration_mn-51-centos-7-liberty-rdo)
+* [MidoNet 5.1 Integration with RDO Liberty on CentOS 7 using Packstack](../midonet-integration_mn-51-centos-7-liberty-rdo-packstack)
 
-* [MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Packstack](../midonet-integration_mem-5-rhel-7-liberty-osp)
+* [MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Packstack](../midonet-integration_mem-5-rhel-7-liberty-osp-packstack)
 
-* [MEM 5.0 Integration with RHOSP Kilo on RHEL 7 using Packstack](../midonet-integration_mem-5-rhel-7-kilo-osp)
+* [MEM 5.0 Integration with RHOSP Kilo on RHEL 7 using Packstack](../midonet-integration_mem-5-rhel-7-kilo-osp-packstack)
 
 ## About MidoNet
 

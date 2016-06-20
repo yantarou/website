@@ -1,15 +1,15 @@
 ---
-title: MEM 5.0 Integration with RHOSP 8 (Liberty) on RHEL 7 using Director
+title: MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Director
 ---
 
-# MEM 5.0 Integration with RHOSP 8 (Liberty) on RHEL 7 using Director
+# MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Director
 
-This guide covers the basic steps for the integration of
-[Midokura Enterprise MidoNet (MEM)][mem] 5.0 into a Director-based RHOSP 8
-(Liberty) OpenStack installation on RHEL 7.
+This guide covers the basic steps for the integration of [Midokura Enterprise
+MidoNet (MEM)][mem] 5.0 into a Director-based RHOSP Liberty OpenStack
+installation on RHEL 7.
 
-It does not cover topics like the installation of a multi-node environment, BGP
-uplink configuration or the MEM Manager and MEM Insights components.
+It does not cover topics like BGP uplink configuration or the MEM Manager and
+MEM Insights components.
 
 Please see the "Quick Start Guides" and the "Operations Guide" at the
 [MEM Documentation][mem-docs] web site for advanced installation and
@@ -23,14 +23,13 @@ In case that you find an issue with this guide, please report it to the
 This guide uses the following variables, which have to be replaced with the
 corresponding values from the target environment:
 
-| `<NSDB-1_IP>`           | The IP address of the 1st NSDB server.
-| `<NSDB-2_IP>`           | The IP address of the 2nd NSDB server.
-| `<NSDB-3_IP>`           | The IP address of the 3rd NSDB server.
-
+| `<CONTROLLER_HOST>`   | The host name or IP address of the Controller node.
+| `<NSDB-1_HOST>`       | The host name or IP address of the 1st NSDB server.
+| `<NSDB-2_HOST>`       | The host name or IP address of the 2nd NSDB server.
+| `<NSDB-3_HOST>`       | The host name or IP address of the 3rd NSDB server.
 
 | `<HOST_NAME>`         | The host name of the server.
 | `<HOST_IP>`           | The IP address of the server.
-
 
 | `<ADMIN_TOKEN>`       | The Keystone admin token.
 | `<ADMIN_PASS>`        | The Keystone `admin` user's password.
@@ -51,6 +50,273 @@ This guide assumes that the Overcloud uses isolated networks on a single NIC
 with tagged VLANs. Depending on the used environment, the network configuration
 steps below may differ.
 
+Additionally to the deployed Overcloud nodes, MidoNet requires at least one node
+for it's Network state Database (NSDB), a cluster of servers that utilize
+ZooKeeper and Cassandra to store MidoNet configuration, run-time state, and
+statistics data.
+
+The NSDB is not part of the Director-based Overcloud deployment and has to be
+installed manually.
+
+For production-level environments it is advised to use at least three NSDB
+nodes. For a small demo or PoC environment a single NSDB node may be sufficient.
+
+## Repository Configuration
+
+### NSDB Nodes
+
+On the NSDB nodes, enable the Datastax repository:
+
+Create the `/etc/yum.repos.d/datastax.repo` file and edit it to contain the
+following:
+
+```
+# DataStax (Apache Cassandra)
+[datastax]
+name = DataStax Repo for Apache Cassandra
+baseurl = http://rpm.datastax.com/community
+enabled = 1
+gpgcheck = 1
+gpgkey = https://rpm.datastax.com/rpm/repo_key
+```
+
+### Controller Node
+
+On the Controller node, enable the RHOSP repository:
+
+```
+# subscription-manager repos --enable=rhel-7-server-openstack-8-rpms
+```
+
+### Controller and Compute Nodes
+
+On the Controller and Compute node, enable the MEM repository:
+
+Create the `/etc/yum.repos.d/midokura.repo` file and edit it to contain the
+following:
+
+```
+[mem]
+name=MEM
+baseurl=http://username:password@repo.midokura.com/mem-5/stable/el7/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.midokura.com/midorepo.key
+
+[mem-openstack-integration]
+name=MEM OpenStack Integration
+baseurl=http://repo.midokura.com/openstack-liberty/stable/el7/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.midokura.com/midorepo.key
+
+[mem-misc]
+name=MEM 3rd Party Tools and Libraries
+baseurl=http://repo.midokura.com/misc/stable/el7/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.midokura.com/midorepo.key
+```
+
+_**Note**: Replace `username` and `password` with the login credentials
+provided by Midokura._
+
+## OpenStack Integration
+
+### Keystone Integration
+
+1. Create MidoNet API Service
+
+   As Keystone `admin` user, execute the following command:
+
+   ```
+   # openstack service create --name midonet --description "MidoNet API Service" midonet
+   ```
+
+2. Create MidoNet Administrative User
+
+   As Keystone `admin` user, execute the following commands:
+
+   ```
+   # openstack user create --project services --password-prompt midonet
+   # openstack role add --project services --user midonet admin
+   ```
+
+### Neutron Integration
+
+#### Neutron Server Configuration
+
+Perform the following steps on the Controller node.
+
+1. Install the MidoNet Plug-in
+
+   ```
+   # yum install python-networking-midonet
+   ```
+
+2. Edit the `/etc/neutron/neutron.conf` file and configure the following
+   parameters:
+
+   ```
+   [DEFAULT]
+   core_plugin = midonet.neutron.plugin_v2.MidonetPluginV2
+
+   service_plugins = lbaas,midonet.neutron.services.firewall.plugin.MidonetFirewallPlugin,midonet.neutron.services.l3.l3_midonet.MidonetL3ServicePlugin
+
+   dhcp_agent_notification = False
+
+   allow_overlapping_ips = True
+   ```
+
+3. Edit the `/etc/neutron/neutron_lbaas.conf` file and configure the following
+   parameters:
+
+   ```
+   [service_providers]
+   service_provider = LOADBALANCER:Midonet:midonet.neutron.services.loadbalancer.driver.MidonetLoadbalancerDriver:default
+   ```
+
+3. Create the directory for the MidoNet plugin configuration:
+
+   ```
+   # mkdir /etc/neutron/plugins/midonet
+   ```
+
+4. Create the `/etc/neutron/plugins/midonet/midonet.ini` file and edit it to
+   contain the following:
+
+   ```
+   [DATABASE]
+   sql_connection = mysql://neutron:<NEUTRON_DB_PASS>@<CONTROLLER_HOST>/neutron
+
+   [MIDONET]
+   # MidoNet API URL
+   midonet_uri = http://<CONTROLLER_HOST>:8181/midonet-api
+   # MidoNet administrative user in Keystone
+   username = midonet
+   password = <MIDONET_PASS>
+   # MidoNet administrative user's tenant
+   project_id = services
+   ```
+
+5. Update the `/etc/neutron/plugin.ini` symlink to point Neutron to the MidoNet
+   configuration:
+
+   ```
+   # ln -sfn /etc/neutron/plugins/midonet/midonet.ini /etc/neutron/plugin.ini
+   ```
+
+#### Neutron Database Upgrade
+
+Run the `midonet-db-manage` utility to upgrade the Neutron database.
+
+1. Stop Neutron service
+
+   ```
+   # systemctl stop neutron-server
+   ```
+
+2. Upgrade Neutron database
+
+   ```
+   # midonet-db-manage upgrade head
+   ```
+
+3. Restart Neutron service
+
+   ```
+   # systemctl start neutron-server
+   ```
+
+### Horizon Integration
+
+To enable firewalling in the Horizon Dashboard, change the `enable_firewall`
+option to `True` in the `/etc/openstack-dashboard/local_settings` file:
+
+```
+OPENSTACK_NEUTRON_NETWORK = {
+   ...
+   'enable_firewall': True,
+   ...
+}
+```
+
+To enable load balancing in the Horizon Dashboard, change the `enable_lb` option
+to `True` in the `/etc/openstack-dashboard/local_settings` file:
+
+```
+OPENSTACK_NEUTRON_NETWORK = {
+   ...
+   'enable_lb': True,
+   ...
+}
+```
+
+### Libvirt Configuration
+
+1. Edit the `/etc/libvirt/qemu.conf` file to contain the following:
+
+   ```
+   user = "root"
+   group = "root"
+
+   [...]
+
+   cgroup_device_acl = [
+       "/dev/null", "/dev/full", "/dev/zero",
+       "/dev/random", "/dev/urandom",
+       "/dev/ptmx", "/dev/kvm", "/dev/kqemu",
+       "/dev/rtc","/dev/hpet", "/dev/vfio/vfio",
+       "/dev/net/tun"
+   ]
+   ```
+
+2. Restart Libvirt:
+
+   ```
+   # systemctl restart libvirtd
+   ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## MidoNet Network State Database (NSDB)
 
 The MidoNet Network State Database (NSDB) is a cluster of servers that utilizes
@@ -63,17 +329,18 @@ installed manually.
 Follow the instructions in the ["NSDB Nodes" section of the MEM Quick Start
 Guide][mem-qsg-nsdb] to install the necessary components.
 
+For a production-level environment it is advised to use at least three NSDB
+nodes. For a small demo or PoC environment a single NSDB node may be sufficient.
 
 ## Open vSwitch Removal
 
 MidoNet conflicts with the installed Open vSwitch (OVS) components. Thus they
 are going to be removed and the existing network configuration recreated.
 
-The following steps have to be performed on all Controller and Compute nodes.
-
 _**Note**: If you do not have physical access to the servers, ensure that you
-access them via a management network interface that is not controlled by Open
-vSwitch._
+access them via a management network interface that is not controlled by OVS._
+
+Preform the following steps on the Controller and Compute nodes.
 
 1. Backup existing network settings
 
@@ -95,7 +362,6 @@ vSwitch._
    vSwitch bridge `br-ex` that is used by the VLANs.
 
    Modify the VLAN interface configuration files:
-
    `/etc/sysconfig/network-scripts/ifcfg-vlan*`
 
    Remove the following OVS-related settings from all `ifcfg-vlan*` files:
@@ -194,6 +460,135 @@ vSwitch._
    # yum erase openvswitch openstack-neutron-openvswitch python-openvswitch
    ```
 
+   Apply modified configuration:
+
+   ```
+   # ifdown eth0
+   # ifup eth0
+   # ifup vlan10
+   # ifup vlan20
+   ...
+   # ifup vlanXX
+   ```
+
+
+## Neutron Plugin Installation
+
+Perform the following steps on the Controller node.
+
+1. Remove ML2 Plug-in
+
+   ```
+   # yum erase openstack-neutron-ml2
+   ```
+
+2. Stop and disable Neutron Agents
+
+   ```
+   # systemctl stop neutron-dhcp-agent
+   # systemctl disable neutron-dhcp-agent
+   # systemctl stop neutron-l3-agent
+   # systemctl disable neutron-l3-agent
+   # systemctl stop neutron-metadata-agent
+   # systemctl disable neutron-metadata-agent
+   ```
+
+3. Install MidoNet Neutron Plugin package:
+
+   ```
+   # yum install python-networking-midonet
+   ```
+
+### MidoNet CLI Installation
+
+1. Install MidoNet CLI package
+
+   ```
+   # yum install python-midonetclient
+   ```
+
+2. Configure MidoNet CLI
+
+   Create the `~/.midonetrc` file and edit it to contain the following:
+
+   ```
+   [cli]
+   api_url = http://<CONTROLLER_HOST>:8181/midonet-api
+   username = admin
+   password = <ADMIN_PASS>
+   project_id = admin
+   ```
+
+
+
+
+## MidoNet Agent installation
+
+
+
+
+
+
+### Midonet Cluster Installation
+
+Perform the following steps on the Controller node.
+
+1. Install MidoNet Cluster package
+
+   ```
+   # yum install midonet-cluster
+   ```
+
+2. Set up mn-conf
+
+   Edit `/etc/midonet/midonet.conf` to point the Cluster to ZooKeeper:
+
+   ```
+   [zookeeper]
+   zookeeper_hosts = <NSDB-1_IP>:2181,<NSDB-2_IP>:2181,<NSDB-3_IP>:2181
+   ```
+
+3. Configure access to the NSDB
+
+   Run the following command to set the cloud-wide values for the ZooKeeper and
+   Cassandra server addresses:
+
+   ```
+   # cat << EOF | mn-conf set -t default
+   zookeeper {
+       zookeeper_hosts = "<NSDB-1_IP>:2181,<NSDB-2_IP>:2181,<NSDB-3_IP>:2181"
+   }
+
+   cassandra {
+       servers = "<NSDB-1_IP>,<NSDB-2_IP>,<NSDB-3_IP>"
+   }
+   EOF
+   ```
+
+4. Configure Keystone access
+
+   Set up access to Keystone for the MidoNet Cluster node:
+
+   ```
+   # cat << EOF | mn-conf set -t default
+   cat << EOF | mn-conf set -t default
+   cluster.auth {
+      provider_class = "org.midonet.cluster.auth.keystone.KeystoneService"
+      admin_role = "admin"
+      keystone.tenant_name = "admin"
+      keystone.admin_token = "<ADMIN_TOKEN>"
+      keystone.host = <HOST_NAME>
+      keystone.port = 35357
+   }
+   EOF
+   ```
+
+5. Start the MidoNet Cluster
+
+   ```
+   # systemctl enable midonet-cluster
+   # systemctl start midonet-cluster
+   ```
 
 
 
@@ -205,78 +600,6 @@ vSwitch._
 
 
 
-
-Change `eth0` config:
-
-```
-# cat ifcfg-br-ex
-# This file is autogenerated by os-net-config
-DEVICE=br-ex
-ONBOOT=yes
-HOTPLUG=no
-NM_CONTROLLED=no
-DEVICETYPE=ovs
-TYPE=OVSBridge
-BOOTPROTO=static
-IPADDR=192.0.2.13
-NETMASK=255.255.255.0
-OVS_EXTRA="set bridge br-ex other-config:hwaddr=52:54:00:2b:51:d7"
-DNS1=8.8.8.8
-DNS2=8.8.4.4
-```
-
-Remove the following:
-
-```
-DEVICETYPE=ovs
-TYPE=OVSPort
-OVS_BRIDGE=br-ex
-```
-
-Add the following:
-
-```
-BOOTPROTO=static
-IPADDR=192.0.2.13
-NETMASK=255.255.255.0
-DNS1=8.8.8.8
-DNS2=8.8.4.4
-```
-
-Remove OVS bridges：
-
-```
-ovs-vsctl del-br br-tun 
-ovs-vsctl del-br br-int 
-ovs-vsctl del-br br-ex 
-```
-
-rm /etc/sysconfig/network-scripts/ifcfg-br-ex
-
-
-systemctl stop openvswitch.service 
-systemctl stop openvswitch-nonetwork.service 
-
-systemctl disable openvswitch.service 
-systemctl disable openvswitch-nonetwork.service 
-
-ifdown eth0
-ifup eth0
-ifup vlan10
-ifup vlan20
-ifup vlan30
-ifup vlan40
-ifup vlan50
-
-2. Remove Open vSwitch components
-
-# yum erase openvswitch openstack-neutron-openvswitch python-openvswitch
-
-Remove the Open vSwitch components:
-
-```
-# yum erase
-```
 
 
 
