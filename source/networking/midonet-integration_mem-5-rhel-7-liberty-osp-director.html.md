@@ -33,12 +33,7 @@ corresponding values from the target environment:
 | `<NSDB-1_HOST>`       | The host name or IP address of the 1st NSDB server.
 | `<NSDB-2_HOST>`       | The host name or IP address of the 2nd NSDB server.
 | `<NSDB-3_HOST>`       | The host name or IP address of the 3rd NSDB server.
-
-| `<KEYSTONE_IP>`   | The IP address to rech the Keystone service.
-
-| `<HOST_NAME>`         | The host name of the server.
-| `<HOST_IP>`           | The IP address of the server.
-
+| `<KEYSTONE_IP>`       | The IP address of the Keystone service.
 | `<ADMIN_TOKEN>`       | The Keystone admin token.
 | `<ADMIN_PASS>`        | The Keystone `admin` user's password.
 | `<MIDONET_PASS>`      | The Keystone `midonet` user's password.
