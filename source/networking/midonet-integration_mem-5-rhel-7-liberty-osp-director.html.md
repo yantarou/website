@@ -5,7 +5,7 @@ title: MEM 5.0 Integration with RHOSP 8 (Liberty) on RHEL 7 using Director
 # MEM 5.0 Integration with RHOSP 8 (Liberty) on RHEL 7 using Director
 
 This guide covers the basic steps for the integration of
-[Midokura Enterprise MidoNet (MEM)][mem] 5.0 into an Director-based RHOSP 8
+[Midokura Enterprise MidoNet (MEM)][mem] 5.0 into a Director-based RHOSP 8
 (Liberty) OpenStack installation on RHEL 7.
 
 It does not cover topics like the installation of a multi-node environment, BGP
@@ -23,8 +23,15 @@ In case that you find an issue with this guide, please report it to the
 This guide uses the following variables, which have to be replaced with the
 corresponding values from the target environment:
 
+| `<NSDB-1_IP>`           | The IP address of the 1st NSDB server.
+| `<NSDB-2_IP>`           | The IP address of the 2nd NSDB server.
+| `<NSDB-3_IP>`           | The IP address of the 3rd NSDB server.
+
+
 | `<HOST_NAME>`         | The host name of the server.
 | `<HOST_IP>`           | The IP address of the server.
+
+
 | `<ADMIN_TOKEN>`       | The Keystone admin token.
 | `<ADMIN_PASS>`        | The Keystone `admin` user's password.
 | `<MIDONET_PASS>`      | The Keystone `midonet` user's password.
@@ -33,77 +40,171 @@ corresponding values from the target environment:
 
 ## Prerequisites
 
-Deploy the Overcloud according to the RHOSP documentation.
+Deploy the Overcloud according to the [RHOSP 8 Director Installation and Usage
+documentation][rhosp8-docs].
 
-Do not yet perform the tasks after Overcloud creation (e.g. tenant network
-creation). This will be done after the MidoNet integration has been completed.
+_**Note**: Do not yet perform the [Tasks after Overcloud Creation]
+[rhosp8-docs-oc-tasks], (e.g. tenant network creation). This will be done after
+the MidoNet integration has been completed._
+
+This guide assumes that the Overcloud uses isolated networks on a single NIC
+with tagged VLANs. Depending on the used environment, the network configuration
+steps below may differ.
+
+## MidoNet Network State Database (NSDB)
+
+The MidoNet Network State Database (NSDB) is a cluster of servers that utilizes
+ZooKeeper and Cassandra to store MidoNet configuration, run-time state, and
+statistics data.
+
+The NSDB is not part of the Director-based Overcloud deployment and has to be
+installed manually.
+
+Follow the instructions in the ["NSDB Nodes" section of the MEM Quick Start
+Guide][mem-qsg-nsdb] to install the necessary components.
+
 
 ## Open vSwitch Removal
 
-MidoNet conflicts with the installed Open vSwitch components. Thus they are
-going to be removed and the existing network configuration recreated.
+MidoNet conflicts with the installed Open vSwitch (OVS) components. Thus they
+are going to be removed and the existing network configuration recreated.
 
 The following steps have to be performed on all Controller and Compute nodes.
 
-_**Note**:
-If you do not have physical access to the servers, ensure that you access the
-nodes via a management network interface that is not controlled by Open vSwitch.
+_**Note**: If you do not have physical access to the servers, ensure that you
+access them via a management network interface that is not controlled by Open
+vSwitch._
 
 1. Backup existing network settings
 
    Create backups of the configuration files in `/etc/sysconfig/network-scripts`
-   and save the output of the following commands for later usage:
+   and save the output of the following commands for later reference:
 
    ```
    # ifconfig -a
    # ovs-vsctl show
    ```
 
-2. Remove Open vSwitch components
+2. Reconfigure VLANs
 
-The following examples assume that a sine following:
+   The VLANs created by the Director deployment have to be reconfigured to not
+   use the Open vSwitch bridge, but instead be configured directly on the
+   physical NIC interface.
 
-A single physical interface `eth0` is being used.
+   The following examples assume a single physical interface `eth0` with an Open
+   vSwitch bridge `br-ex` that is used by the VLANs.
+
+   Modify the VLAN interface configuration files:
+
+   `/etc/sysconfig/network-scripts/ifcfg-vlan*`
+
+   Remove the following OVS-related settings from all `ifcfg-vlan*` files:
+
+   ```
+   DEVICETYPE=ovs
+   TYPE=OVSIntPort
+   OVS_BRIDGE=br-ex
+   OVS_OPTIONS="tag=XX"
+   ```
+
+   And instead tie the VLANs to the physical interface:
+
+   ```
+   PHYSDEV=eth0
+   VLAN=yes
+   VLAN_NAME_TYPE=VLAN_PLUS_VID_NO_PAD
+   VLAN_ID=XX
+   ```
+
+   Example:
+
+   ```
+   DEVICE=vlan99
+   PHYSDEV=eth0
+   ONBOOT=yes
+   HOTPLUG=no
+   NM_CONTROLLED=no
+   PEERDNS=NO
+   BOOTPROTO=static
+   IPADDR=203.0.113.99
+   NETMASK=255.255.255.0
+   VLAN=yes
+   VLAN_NAME_TYPE=VLAN_PLUS_VID_NO_PAD
+   VLAN_ID=99
+   ```
+
+3. Reconfigure physical interface
+
+   The IP settings from the OVS bridge have to be configured on the physical
+   interface.
+
+   Get the OVS bridge's IP configuration (from `ifcfg-br-ex`):
+
+   ```
+   BOOTPROTO=static
+   IPADDR=192.0.2.13
+   NETMASK=255.255.255.0
+   DNS1=8.8.8.8
+   DNS2=8.8.4.4
+   ```
+
+   Edit the physical interface's configuration (`ifcfg-eth0`) and remove the
+   following OVS-related entries:
+
+   ```
+   DEVICETYPE=ovs
+   TYPE=OVSPort
+   OVS_BRIDGE=br-ex
+   ```
+
+   Afterwards add the IP configuration entries:
+
+   ```
+   BOOTPROTO=static
+   IPADDR=192.0.2.13
+   NETMASK=255.255.255.0
+   DNS1=8.8.8.8
+   DNS2=8.8.4.4
+   ```
+
+3. Remove OVS components
+
+   Remove the OVS bridges:
+
+   ```
+   # ovs-vsctl del-br br-tun 
+   # ovs-vsctl del-br br-int 
+   # ovs-vsctl del-br br-ex 
+   ```
+
+   ```
+   # rm /etc/sysconfig/network-scripts/ifcfg-br-ex
+   ```
+
+   Stop OVS services:
+
+   ```
+   # systemctl stop openvswitch.service
+   # systemctl stop openvswitch-nonetwork.service
+   ```
+
+   Erase OVS packages:
+
+   ```
+   # yum erase openvswitch openstack-neutron-openvswitch python-openvswitch
+   ```
 
 
-Modify the VLAN interface configuration files:
 
-`/etc/sysconfig/network-scripts/ifcfg-vlan*`
 
-Remove the following settings from all `ifcfg-vlan*` files:
 
-```
-DEVICETYPE=ovs
-TYPE=OVSIntPort
-OVS_BRIDGE=br-ex
-OVS_OPTIONS="tag=XX"
-```
 
-Add the following:
 
-```
-PHYSDEV=eth0
-VLAN=yes
-VLAN_NAME_TYPE=VLAN_PLUS_VID_NO_PAD
-VLAN_ID=XX
-```
 
-Example:
 
-```
-DEVICE=vlan99
-PHYSDEV=eth0
-ONBOOT=yes
-HOTPLUG=no
-NM_CONTROLLED=no
-PEERDNS=NO
-BOOTPROTO=static
-IPADDR=203.0.113.99
-NETMASK=255.255.255.0
-VLAN=yes
-VLAN_NAME_TYPE=VLAN_PLUS_VID_NO_PAD
-VLAN_ID=99
-```
+
+
+
 
 Change `eth0` config:
 
@@ -167,6 +268,7 @@ ifup vlan30
 ifup vlan40
 ifup vlan50
 
+2. Remove Open vSwitch components
 
 # yum erase openvswitch openstack-neutron-openvswitch python-openvswitch
 
@@ -858,3 +960,7 @@ We first need to create a Tunnel Zone in the Midonet CLI and then register the M
 [mem]: http://www.midokura.com/midonet-enterprise/ "Midokura Enterprise MidoNet (MEM)"
 [mem-docs]: http://docs.midokura.com/ "Midokura Enterprise MidoNet (MEM) Documentation"
 [mem-support]: http://www.midokura.com/customer-support/ "Midokura Customer Support"
+[mem-qsg-nsdb]: http://docs.midokura.com/docs/latest-en/quick-start-guide/rhel-7_liberty-osp/content/_nsdb_nodes.html
+[rhosp8-docs]: https://access.redhat.com/documentation/en/red-hat-openstack-platform/8/director-installation-and-usage/director-installation-and-usage
+[rhosp8-docs-oc-tasks]: https://access.redhat.com/documentation/en/red-hat-openstack-platform/8/director-installation-and-usage/chapter-8-performing-tasks-after-overcloud-creation
+
