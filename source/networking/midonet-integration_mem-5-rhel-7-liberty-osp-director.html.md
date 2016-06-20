@@ -2,6 +2,12 @@
 title: MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Director
 ---
 
+<!--
+#########################
+### DRAFT, 2016-06-20 ###
+#########################
+-->
+
 # MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Director
 
 This guide covers the basic steps for the integration of [Midokura Enterprise
@@ -27,6 +33,8 @@ corresponding values from the target environment:
 | `<NSDB-1_HOST>`       | The host name or IP address of the 1st NSDB server.
 | `<NSDB-2_HOST>`       | The host name or IP address of the 2nd NSDB server.
 | `<NSDB-3_HOST>`       | The host name or IP address of the 3rd NSDB server.
+
+| `<KEYSTONE_IP>`   | The IP address to rech the Keystone service.
 
 | `<HOST_NAME>`         | The host name of the server.
 | `<HOST_IP>`           | The IP address of the server.
@@ -121,218 +129,21 @@ gpgkey=https://repo.midokura.com/midorepo.key
 _**Note**: Replace `username` and `password` with the login credentials
 provided by Midokura._
 
+## OpenStack Installation
+
+Deploy the Overcloud:
+
+```
+# openstack overcloud deploy ...
+```
+
+_**Note**: Do not yet perform the [Tasks after Overcloud Creation]
+[rhosp8-docs-oc-tasks], (e.g. tenant network creation). This will be done after
+the MidoNet integration has been completed._
+
 ## OpenStack Integration
 
-### Keystone Integration
-
-1. Create MidoNet API Service
-
-   As Keystone `admin` user, execute the following command:
-
-   ```
-   # openstack service create --name midonet --description "MidoNet API Service" midonet
-   ```
-
-2. Create MidoNet Administrative User
-
-   As Keystone `admin` user, execute the following commands:
-
-   ```
-   # openstack user create --project services --password-prompt midonet
-   # openstack role add --project services --user midonet admin
-   ```
-
-### Neutron Integration
-
-#### Neutron Server Configuration
-
-Perform the following steps on the Controller node.
-
-1. Install the MidoNet Plug-in
-
-   ```
-   # yum install python-networking-midonet
-   ```
-
-2. Edit the `/etc/neutron/neutron.conf` file and configure the following
-   parameters:
-
-   ```
-   [DEFAULT]
-   core_plugin = midonet.neutron.plugin_v2.MidonetPluginV2
-
-   service_plugins = lbaas,midonet.neutron.services.firewall.plugin.MidonetFirewallPlugin,midonet.neutron.services.l3.l3_midonet.MidonetL3ServicePlugin
-
-   dhcp_agent_notification = False
-
-   allow_overlapping_ips = True
-   ```
-
-3. Edit the `/etc/neutron/neutron_lbaas.conf` file and configure the following
-   parameters:
-
-   ```
-   [service_providers]
-   service_provider = LOADBALANCER:Midonet:midonet.neutron.services.loadbalancer.driver.MidonetLoadbalancerDriver:default
-   ```
-
-3. Create the directory for the MidoNet plugin configuration:
-
-   ```
-   # mkdir /etc/neutron/plugins/midonet
-   ```
-
-4. Create the `/etc/neutron/plugins/midonet/midonet.ini` file and edit it to
-   contain the following:
-
-   ```
-   [DATABASE]
-   sql_connection = mysql://neutron:<NEUTRON_DB_PASS>@<CONTROLLER_HOST>/neutron
-
-   [MIDONET]
-   # MidoNet API URL
-   midonet_uri = http://<CONTROLLER_HOST>:8181/midonet-api
-   # MidoNet administrative user in Keystone
-   username = midonet
-   password = <MIDONET_PASS>
-   # MidoNet administrative user's tenant
-   project_id = services
-   ```
-
-5. Update the `/etc/neutron/plugin.ini` symlink to point Neutron to the MidoNet
-   configuration:
-
-   ```
-   # ln -sfn /etc/neutron/plugins/midonet/midonet.ini /etc/neutron/plugin.ini
-   ```
-
-#### Neutron Database Upgrade
-
-Run the `midonet-db-manage` utility to upgrade the Neutron database.
-
-1. Stop Neutron service
-
-   ```
-   # systemctl stop neutron-server
-   ```
-
-2. Upgrade Neutron database
-
-   ```
-   # midonet-db-manage upgrade head
-   ```
-
-3. Restart Neutron service
-
-   ```
-   # systemctl start neutron-server
-   ```
-
-### Horizon Integration
-
-To enable firewalling in the Horizon Dashboard, change the `enable_firewall`
-option to `True` in the `/etc/openstack-dashboard/local_settings` file:
-
-```
-OPENSTACK_NEUTRON_NETWORK = {
-   ...
-   'enable_firewall': True,
-   ...
-}
-```
-
-To enable load balancing in the Horizon Dashboard, change the `enable_lb` option
-to `True` in the `/etc/openstack-dashboard/local_settings` file:
-
-```
-OPENSTACK_NEUTRON_NETWORK = {
-   ...
-   'enable_lb': True,
-   ...
-}
-```
-
-### Libvirt Configuration
-
-1. Edit the `/etc/libvirt/qemu.conf` file to contain the following:
-
-   ```
-   user = "root"
-   group = "root"
-
-   [...]
-
-   cgroup_device_acl = [
-       "/dev/null", "/dev/full", "/dev/zero",
-       "/dev/random", "/dev/urandom",
-       "/dev/ptmx", "/dev/kvm", "/dev/kqemu",
-       "/dev/rtc","/dev/hpet", "/dev/vfio/vfio",
-       "/dev/net/tun"
-   ]
-   ```
-
-2. Restart Libvirt:
-
-   ```
-   # systemctl restart libvirtd
-   ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## MidoNet Network State Database (NSDB)
-
-The MidoNet Network State Database (NSDB) is a cluster of servers that utilizes
-ZooKeeper and Cassandra to store MidoNet configuration, run-time state, and
-statistics data.
-
-The NSDB is not part of the Director-based Overcloud deployment and has to be
-installed manually.
-
-Follow the instructions in the ["NSDB Nodes" section of the MEM Quick Start
-Guide][mem-qsg-nsdb] to install the necessary components.
-
-For a production-level environment it is advised to use at least three NSDB
-nodes. For a small demo or PoC environment a single NSDB node may be sufficient.
-
-## Open vSwitch Removal
+### Open vSwitch Removal
 
 MidoNet conflicts with the installed Open vSwitch (OVS) components. Thus they
 are going to be removed and the existing network configuration recreated.
@@ -471,337 +282,6 @@ Preform the following steps on the Controller and Compute nodes.
    # ifup vlanXX
    ```
 
-
-## Neutron Plugin Installation
-
-Perform the following steps on the Controller node.
-
-1. Remove ML2 Plug-in
-
-   ```
-   # yum erase openstack-neutron-ml2
-   ```
-
-2. Stop and disable Neutron Agents
-
-   ```
-   # systemctl stop neutron-dhcp-agent
-   # systemctl disable neutron-dhcp-agent
-   # systemctl stop neutron-l3-agent
-   # systemctl disable neutron-l3-agent
-   # systemctl stop neutron-metadata-agent
-   # systemctl disable neutron-metadata-agent
-   ```
-
-3. Install MidoNet Neutron Plugin package:
-
-   ```
-   # yum install python-networking-midonet
-   ```
-
-### MidoNet CLI Installation
-
-1. Install MidoNet CLI package
-
-   ```
-   # yum install python-midonetclient
-   ```
-
-2. Configure MidoNet CLI
-
-   Create the `~/.midonetrc` file and edit it to contain the following:
-
-   ```
-   [cli]
-   api_url = http://<CONTROLLER_HOST>:8181/midonet-api
-   username = admin
-   password = <ADMIN_PASS>
-   project_id = admin
-   ```
-
-
-
-
-## MidoNet Agent installation
-
-
-
-
-
-
-### Midonet Cluster Installation
-
-Perform the following steps on the Controller node.
-
-1. Install MidoNet Cluster package
-
-   ```
-   # yum install midonet-cluster
-   ```
-
-2. Set up mn-conf
-
-   Edit `/etc/midonet/midonet.conf` to point the Cluster to ZooKeeper:
-
-   ```
-   [zookeeper]
-   zookeeper_hosts = <NSDB-1_IP>:2181,<NSDB-2_IP>:2181,<NSDB-3_IP>:2181
-   ```
-
-3. Configure access to the NSDB
-
-   Run the following command to set the cloud-wide values for the ZooKeeper and
-   Cassandra server addresses:
-
-   ```
-   # cat << EOF | mn-conf set -t default
-   zookeeper {
-       zookeeper_hosts = "<NSDB-1_IP>:2181,<NSDB-2_IP>:2181,<NSDB-3_IP>:2181"
-   }
-
-   cassandra {
-       servers = "<NSDB-1_IP>,<NSDB-2_IP>,<NSDB-3_IP>"
-   }
-   EOF
-   ```
-
-4. Configure Keystone access
-
-   Set up access to Keystone for the MidoNet Cluster node:
-
-   ```
-   # cat << EOF | mn-conf set -t default
-   cat << EOF | mn-conf set -t default
-   cluster.auth {
-      provider_class = "org.midonet.cluster.auth.keystone.KeystoneService"
-      admin_role = "admin"
-      keystone.tenant_name = "admin"
-      keystone.admin_token = "<ADMIN_TOKEN>"
-      keystone.host = <HOST_NAME>
-      keystone.port = 35357
-   }
-   EOF
-   ```
-
-5. Start the MidoNet Cluster
-
-   ```
-   # systemctl enable midonet-cluster
-   # systemctl start midonet-cluster
-   ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-################################################################################
-CONTROLLER + COMPUTE
-################################################################################
-
--> OpenStack Installation Clean-up
-
-
-################################################################################
-CONTROLLER
-################################################################################
-
-# subscription-manager repos --enable=rhel-7-server-openstack-8-rpms
-# yum install python-networking-midonet
-
-Edit the /etc/neutron/neutron.conf file and configure the following parameters:
-
-
--> install cluster
-
-keystone.host = 10.0.0.4
--> as per overcloudrc
-
-
-
-################################################################################
-COMPUTE
-################################################################################
-
--> libvirt config
-
--> install midolman
-
-
-################################################################################
-OVERCLOUD
-################################################################################
-
-
-
-
-
-$ keystone user-create --name midonet --pass <MIDONET_PASS> --tenant services
-$ keystone user-role-add --user midonet --role admin --tenant services
-
-openstack user create --project services --password-prompt midonet
-openstack role add --project services --user midonet admin
-
-
-## Prerequisites
-
-For ease of configuration, this guide assumes that SELinux is set to permissive
-mode, as well as the firewall being disabled.
-
-1. Disable SELinux
-
-   To change the mode, execute the following command:
-
-   ```
-   # setenforce Permissive
-   ```
-
-   To permanently change the SELinux configuration, edit the
-   `/etc/selinux/config` file accordingly:
-
-   ```
-   SELINUX=permissive
-   ```
-
-2. Disable firewall
-
-   If installed, disable the firewall service:
-
-   ```
-   # systemctl stop firewalld
-   # systemctl disable firewalld
-   ```
-
-   ```
-   # systemctl stop iptables
-   # systemctl disable iptables
-   ```
-
-## Repository Configuration
-
-1. Enable Red Hat base repositories
-
-   ```
-   # subscription-manager repos --enable=rhel-7-server-rpms
-   # subscription-manager repos --enable=rhel-7-server-extras-rpms
-   ```
-
-2. Enable Red Hat OSP repository
-
-   ```
-   # subscription-manager repos --enable=rhel-7-server-openstack-8-rpms
-   ```
-
-3. Enable DataStax repository
-
-   Create the `/etc/yum.repos.d/datastax.repo` file and edit it to contain the
-   following:
-
-   ```
-   # DataStax (Apache Cassandra)
-   [datastax]
-   name = DataStax Repo for Apache Cassandra
-   baseurl = http://rpm.datastax.com/community
-   enabled = 1
-   gpgcheck = 1
-   gpgkey = https://rpm.datastax.com/rpm/repo_key
-   ```
-
-2. Enable MEM repositories
-
-   Create the `/etc/yum.repos.d/midokura.repo` file and edit it to contain the
-   following:
-
-   ```
-   [mem]
-   name=MEM
-   baseurl=http://username:password@repo.midokura.com/mem-5/stable/el7/
-   enabled=1
-   gpgcheck=1
-   gpgkey=https://repo.midokura.com/midorepo.key
-
-   [mem-openstack-integration]
-   name=MEM OpenStack Integration
-   baseurl=http://repo.midokura.com/openstack-liberty/stable/el7/
-   enabled=1
-   gpgcheck=1
-   gpgkey=https://repo.midokura.com/midorepo.key
-
-   [mem-misc]
-   name=MEM 3rd Party Tools and Libraries
-   baseurl=http://repo.midokura.com/misc/stable/el7/
-   enabled=1
-   gpgcheck=1
-   gpgkey=https://repo.midokura.com/midorepo.key
-   ```
-
-   _**Note**: Replace `username` and `password` with the login credentials
-   provided by Midokura._
-
-3. Install available updates
-
-   ```
-   # yum clean all
-   # yum upgrade
-   ```
-
-4. If necessary, reboot the system
-
-   ```
-   # reboot
-   ```
-
-## OpenStack Installation
-
-1. Install Packstack
-
-   ```
-   # yum install openstack-packstack
-   ```
-
-2. Install OpenStack
-
-   ```
-   # packstack --allinone
-   ```
-
-### OpenStack Installation Clean-up
-
-1. Remove Open vSwitch packages
-
-   ```
-   # yum erase openstack-neutron-openvswitch openvswitch python-openvswitch
-   ```
-
-2. Remove ML2 Plug-in
-
-   ```
-   # yum erase openstack-neutron-ml2
-   ```
-
-3. Stop and disable Neutron Agents
-
-   ```
-   # systemctl stop neutron-dhcp-agent
-   # systemctl disable neutron-dhcp-agent
-   # systemctl stop neutron-l3-agent
-   # systemctl disable neutron-l3-agent
-   # systemctl stop neutron-metadata-agent
-   # systemctl disable neutron-metadata-agent
-   ```
-
-## OpenStack Integration
-
 ### Keystone Integration
 
 1. Create MidoNet API Service
@@ -817,13 +297,15 @@ mode, as well as the firewall being disabled.
    As Keystone `admin` user, execute the following commands:
 
    ```
-   $ keystone user-create --name midonet --pass <MIDONET_PASS> --tenant services
-   $ keystone user-role-add --user midonet --role admin --tenant services
+   # openstack user create --project services --password-prompt midonet
+   # openstack role add --project services --user midonet admin
    ```
 
 ### Neutron Integration
 
 #### Neutron Server Configuration
+
+Perform the following steps on the Controller node.
 
 1. Install the MidoNet Plug-in
 
@@ -843,7 +325,12 @@ mode, as well as the firewall being disabled.
    dhcp_agent_notification = False
 
    allow_overlapping_ips = True
+   ```
 
+3. Edit the `/etc/neutron/neutron_lbaas.conf` file and configure the following
+   parameters:
+
+   ```
    [service_providers]
    service_provider = LOADBALANCER:Midonet:midonet.neutron.services.loadbalancer.driver.MidonetLoadbalancerDriver:default
    ```
@@ -859,11 +346,11 @@ mode, as well as the firewall being disabled.
 
    ```
    [DATABASE]
-   sql_connection = mysql://neutron:<NEUTRON_DB_PASS>@<HOST_NAME>/neutron
+   sql_connection = mysql://neutron:<NEUTRON_DB_PASS>@<CONTROLLER_HOST>/neutron
 
    [MIDONET]
    # MidoNet API URL
-   midonet_uri = http://<HOST_NAME>:8181/midonet-api
+   midonet_uri = http://<CONTROLLER_HOST>:8181/midonet-api
    # MidoNet administrative user in Keystone
    username = midonet
    password = <MIDONET_PASS>
@@ -878,9 +365,9 @@ mode, as well as the firewall being disabled.
    # ln -sfn /etc/neutron/plugins/midonet/midonet.ini /etc/neutron/plugin.ini
    ```
 
-#### Neutron Database Rebuild
+#### Neutron Database Upgrade
 
-Packstack already created some Neutron networks that have to be removed 
+Run the `midonet-db-manage` utility to upgrade the Neutron database.
 
 1. Stop Neutron service
 
@@ -888,18 +375,9 @@ Packstack already created some Neutron networks that have to be removed
    # systemctl stop neutron-server
    ```
 
-2. Rebuild Neutron database
+2. Upgrade Neutron database
 
    ```
-   # mysql -e 'drop database neutron'
-   # mysql -e 'create database neutron'
-
-   # neutron-db-manage \
-      --config-file /usr/share/neutron/neutron-dist.conf \
-      --config-file /etc/neutron/neutron.conf \
-      --config-file /etc/neutron/plugin.ini \
-      upgrade head
-
    # midonet-db-manage upgrade head
    ```
 
@@ -935,6 +413,8 @@ OPENSTACK_NEUTRON_NETWORK = {
 
 ### Libvirt Configuration
 
+On the Compute nodes, change the Libvirt configuration as follows.
+
 1. Edit the `/etc/libvirt/qemu.conf` file to contain the following:
 
    ```
@@ -962,6 +442,18 @@ OPENSTACK_NEUTRON_NETWORK = {
 
 ### MidoNet Network State Database
 
+The MidoNet Network State Database (NSDB) is a cluster of servers that utilizes
+ZooKeeper and Cassandra to store MidoNet configuration, run-time state, and
+statistics data.
+
+The NSDB is not part of the Director-based Overcloud deployment and has to be
+installed manually.
+
+For a production-level environment it is advised to use at least three NSDB
+nodes. For a small demo or PoC environment a single NSDB node may be sufficient.
+
+On the NSDB nodes, perform the following steps.
+
 #### ZooKeeper Installation
 
 1. Install ZooKeeper packages:
@@ -974,7 +466,9 @@ OPENSTACK_NEUTRON_NETWORK = {
 2. Edit the `/etc/zookeeper/zoo.cfg` file to contain the following:
 
    ```
-   server.1=<HOST_NAME>:2888:3888
+   server.1=<NSDB-1_HOST>:2888:3888
+   server.1=<NSDB-2_HOST>:2888:3888
+   server.1=<NSDB-3_HOST>:2888:3888
    autopurge.snapRetainCount=10
    autopurge.purgeInterval=12
    ```
@@ -987,10 +481,24 @@ OPENSTACK_NEUTRON_NETWORK = {
    ```
 
 4. Create the `/var/lib/zookeeper/data/myid` file and edit it to contain the
-   host's ID:
+   host's ID.
+
+   On node 1:
 
    ```
    # echo 1 > /var/lib/zookeeper/data/myid
+   ```
+
+   On node 2:
+
+   ```
+   # echo 2 > /var/lib/zookeeper/data/myid
+   ```
+
+   On node 3:
+
+   ```
+   # echo 3 > /var/lib/zookeeper/data/myid
    ```
 
 5. Create Java Symlink
@@ -1010,7 +518,7 @@ OPENSTACK_NEUTRON_NETWORK = {
 7. Verify ZooKeeper Operation
 
    A basic check can be done by executing the `ruok` (Are you ok?) command on
-   the node. This will reply with `imok` (I am ok.) if the server is running in
+   each node. This will reply with `imok` (I am ok.) if the server is running in
    a non-error state:
 
    ```
@@ -1028,7 +536,9 @@ OPENSTACK_NEUTRON_NETWORK = {
 
 2. Configure the cluster.
 
-   Edit the `/etc/cassandra/conf/cassandra.yaml` to contain the following:
+   Edit the `/etc/cassandra/conf/cassandra.yaml` to contain the following.
+
+   On all nodes:
 
    ```
    # The name of the cluster.
@@ -1040,20 +550,48 @@ OPENSTACK_NEUTRON_NETWORK = {
    seed_provider:
        - class_name: org.apache.cassandra.locator.SimpleSeedProvider
          parameters:
-             - seeds: "<HOST_NAME>"
+             - seeds: "<NSDB-1_HOST>,<NSDB-2_HOST>,<NSDB-3_HOST>"
+   ```
 
+   On node 1:
+
+   ```
    # Address to bind to and tell other Cassandra nodes to connect to.
-   listen_address: <HOST_NAME>
+   listen_address: <NSDB-1_HOST>
 
    [...]
 
    # The address to bind the Thrift RPC service.
-   rpc_address: <HOST_NAME>
+   rpc_address: <NSDB-1_HOST>
+   ```
+
+   On node 2:
+
+   ```
+   # Address to bind to and tell other Cassandra nodes to connect to.
+   listen_address: <NSDB-2_HOST>
+
+   [...]
+
+   # The address to bind the Thrift RPC service.
+   rpc_address: <NSDB-2_HOST>
+   ```
+
+   On node 3:
+
+   ```
+   # Address to bind to and tell other Cassandra nodes to connect to.
+   listen_address: <NSDB-3_HOST>
+
+   [...]
+
+   # The address to bind the Thrift RPC service.
+   rpc_address: <NSDB-3_HOST>
    ```
 
 3. Edit the service's init script
 
-   On installation, the `/var/run/cassandra` directory is created, but because
+   On installation, the `/var/run/cassandra` directory is created, but in case
    it is located on a temporary file system it will be lost after system reboot.
    As a result it is not possible to stop or restart the Cassandra service
    anymore.
@@ -1084,7 +622,7 @@ OPENSTACK_NEUTRON_NETWORK = {
 5. Verify Cassandra Operation
 
    A basic check can be done by executing the `nodetool status` command. This
-   will reply with `UN` (Up / Normal) in the first column if the server is
+   will reply with `UN` (Up / Normal) in the first column if the nodes are
    running in a non-error state:
 
    ```
@@ -1092,11 +630,15 @@ OPENSTACK_NEUTRON_NETWORK = {
    [...]
    Status=Up/Down
    |/ State=Normal/Leaving/Joining/Moving
-   --  Address    Load      Tokens  Owns    Host ID                               Rack
-   UN  192.0.2.1  46.14 KB  256     100.0%  11111111-2222-3333-4444-555555555555  rack1
+   --  Address  Load      Tokens  Owns    Host ID  Rack
+   UN  ...      46.14 KB  256     100.0%  ...      rack1
+   UN  ...      46.14 KB  256     100.0%  ...      rack1
+   UN  ...      46.14 KB  256     100.0%  ...      rack1
    ```
 
-### Midonet Cluster Installation
+### MidoNet Cluster Installation
+
+Perform the following steps on the Controller node.
 
 1. Install MidoNet Cluster package
 
@@ -1110,7 +652,7 @@ OPENSTACK_NEUTRON_NETWORK = {
 
    ```
    [zookeeper]
-   zookeeper_hosts = <HOST_NAME>:2181
+   zookeeper_hosts = <NSDB-1_HOST>:2181,<NSDB-2_HOST>:2181,<NSDB-3_HOST>:2181
    ```
 
 3. Configure access to the NSDB
@@ -1121,11 +663,11 @@ OPENSTACK_NEUTRON_NETWORK = {
    ```
    # cat << EOF | mn-conf set -t default
    zookeeper {
-       zookeeper_hosts = "<HOST_NAME>:2181"
+       zookeeper_hosts = "<NSDB-1_HOST>:2181,<NSDB-2_HOST>:2181,<NSDB-3_HOST>:2181"
    }
 
    cassandra {
-       servers = "<HOST_NAME>"
+       servers = "<NSDB-1_HOST>,<NSDB-2_HOST>,<NSDB-3_HOST>"
    }
    EOF
    ```
@@ -1142,7 +684,7 @@ OPENSTACK_NEUTRON_NETWORK = {
       admin_role = "admin"
       keystone.tenant_name = "admin"
       keystone.admin_token = "<ADMIN_TOKEN>"
-      keystone.host = <HOST_NAME>
+      keystone.host = <KEYSTONE_IP>
       keystone.port = 35357
    }
    EOF
@@ -1157,6 +699,8 @@ OPENSTACK_NEUTRON_NETWORK = {
 
 ### MidoNet CLI Installation
 
+Perform the following steps on the Controller node.
+
 1. Install MidoNet CLI package
 
    ```
@@ -1169,13 +713,15 @@ OPENSTACK_NEUTRON_NETWORK = {
 
    ```
    [cli]
-   api_url = http://<HOST_NAME>:8181/midonet-api
+   api_url = http://<CONTROLLER_HOST>:8181/midonet-api
    username = admin
    password = <ADMIN_PASS>
    project_id = admin
    ```
 
 ### MidoNet Agent (Midolman) Installation
+
+Perform the following steps on the Compute and Gateway nodes.
 
 1. Install Midolman package:
 
@@ -1189,7 +735,7 @@ OPENSTACK_NEUTRON_NETWORK = {
 
    ```
    [zookeeper]
-   zookeeper_hosts = <HOST_NAME>:2181
+   zookeeper_hosts = <NSDB-1_HOST>:2181,<NSDB-2_HOST>:2181,<NSDB-3_HOST>:2181
    ```
 
 3. Configure MidoNet Metadata Proxy
@@ -1198,10 +744,12 @@ OPENSTACK_NEUTRON_NETWORK = {
    Metadata Proxy:
 
    ```
-   # echo "agent.openstack.metadata.nova_metadata_url : \"http://<HOST_NAME>:8775\"" | mn-conf set -t default
+   # echo "agent.openstack.metadata.nova_metadata_url : \"http://<NOVA_MDP_IP>:8775\"" | mn-conf set -t default
    # echo "agent.openstack.metadata.shared_secret : <MDP_SHARED_SECRET>" | mn-conf set -t default
    # echo "agent.openstack.metadata.enabled : true" | mn-conf set -t default
    ```
+
+   _**Note**: This step has to be run only once on a single node._
 
 4. Enable and start MidoNet Agent
 
@@ -1212,7 +760,8 @@ OPENSTACK_NEUTRON_NETWORK = {
 
 ### MidoNet Tunnel Zone Creation and Host Registration
 
-We first need to create a Tunnel Zone in the Midonet CLI and then register the Midolman agent to it. This will allow the Midolman agent to send packets and communicate to the Midonet API.
+Create a Tunnel Zone in the Midonet CLI and register the MidoNet Agents agent to
+it.
 
 1. Launch the MidoNet CLI:
 
@@ -1236,9 +785,16 @@ We first need to create a Tunnel Zone in the Midonet CLI and then register the M
    ```
    midonet> list host
    host host0 name [...] alive true addresses [...] flooding-proxy-weight 1
+   host host1 name [...] alive true addresses [...] flooding-proxy-weight 1
+   ...
 
    midonet> tunnel-zone tzone0 add member host host0 address <HOST_IP>
-   zone tzone0 host host0 address 192.0.2.1
+   zone tzone0 host host0 address <HOST_IP>
+
+   midonet> tunnel-zone tzone0 add member host host1 address <HOST_IP>
+   zone tzone0 host host1 address <HOST_IP>
+
+   ...
 
    midonet> exit
    ```
@@ -1260,24 +816,24 @@ We first need to create a Tunnel Zone in the Midonet CLI and then register the M
       --gateway 203.0.113.1
    ```
 
-2. Create a network for the `demo` tenant:
+2. Create network for the tenants:
 
-   As Keystone `demo` user, execute the following commands:
+   As Keystone tenant user, execute the following commands:
 
    ```
-   # neutron net-create demo-net
+   # neutron net-create tenant-net
 
    # neutron subnet-create \
-      demo-net 192.168.1.0/24 \
-      --name demo-subnet \
+      tenant-net 192.168.1.0/24 \
+      --name tenant-subnet \
       --dns-nameserver 8.8.8.8 \
       --gateway 192.168.1.1
 
-   # neutron router-create demo-router
+   # neutron router-create tenant-router
 
-   # neutron router-interface-add demo-router demo-subnet
+   # neutron router-interface-add tenant-router tenant-subnet
 
-   # neutron router-gateway-set demo-router ext-net
+   # neutron router-gateway-set tenant-router ext-net
    ```
 
 [mem]: http://www.midokura.com/midonet-enterprise/ "Midokura Enterprise MidoNet (MEM)"
@@ -1286,4 +842,3 @@ We first need to create a Tunnel Zone in the Midonet CLI and then register the M
 [mem-qsg-nsdb]: http://docs.midokura.com/docs/latest-en/quick-start-guide/rhel-7_liberty-osp/content/_nsdb_nodes.html
 [rhosp8-docs]: https://access.redhat.com/documentation/en/red-hat-openstack-platform/8/director-installation-and-usage/director-installation-and-usage
 [rhosp8-docs-oc-tasks]: https://access.redhat.com/documentation/en/red-hat-openstack-platform/8/director-installation-and-usage/chapter-8-performing-tasks-after-overcloud-creation
-
