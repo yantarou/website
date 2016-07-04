@@ -2,12 +2,6 @@
 title: MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Director
 ---
 
-<!--
-#########################
-### DRAFT, 2016-06-20 ###
-#########################
--->
-
 # MEM 5.0 Integration with RHOSP Liberty on RHEL 7 using Director
 
 This guide covers the basic steps for the integration of [Midokura Enterprise
